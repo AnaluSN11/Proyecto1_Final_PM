@@ -17,7 +17,7 @@ FLAG_CLK:			.byte 1		// Bandera para el minuto
 FLAG_FIX_TIME:		.byte 1		// Bandera overflow/underflow reloj
 FLAG_FIX_DATE:		.byte 1		// Bandera overflow/underflow fecha
 FLAG_FIX_ALARM:		.byte 1		// Bandera overflow/underflow alarma
-COUNTER_DEBOUNCE:	.byte 1		// Contador de debouncer (Timer2)
+FLAG_ALARM_FIRED:	.byte 1		// Bandera para que solo suene 1 vez la alarma
 MUX_INDEX:			.byte 1		// Display activo (0-3)
 // Variables de edición
 EDIT_D1:			.byte 1
@@ -51,9 +51,8 @@ COUNTER_MESD:		.byte 1
 .equ	SET_ALARM	= 4
 .equ	ALARM_RING	= 5
 // Variables para cargar a los Timers
-.equ	T1VALUE		= 0xFEFF
+.equ	T1VALUE		= 0x1B1E
 .equ	T0VALUE		= 0x0C
-.equ	DEBOUNCE_MS	= 50
 
 /****************************************/
 // Vectores de interrupcion
@@ -188,31 +187,37 @@ INIT_VAR:								// Inicialización de todas las variables
 	STS		FLAG_FIX_TIME, R16
 	STS		FLAG_FIX_DATE, R16
 	STS		FLAG_FIX_ALARM, R16
+	STS		FLAG_ALARM_FIRED, R16
 	STS		STATE, R16
 	STS		MUX_INDEX, R16
 	STS		EDIT_D1, R16
 	STS		EDIT_D2, R16
 	STS		EDIT_D3, R16
 	STS		EDIT_D4, R16
-	STS		ALARM_MINU, R16
-	STS		ALARM_MIND, R16
-	STS		ALARM_HORU, R16
-	STS		ALARM_HORD, R16
-	STS		COUNTER_DEBOUNCE, R16
 	STS		COUNTER_MINU, R16
 	STS		COUNTER_MIND, R16
 	STS		COUNTER_HORU, R16
 	STS		COUNTER_HORD, R16
 	STS		COUNTER_DIAD, R16
 	STS		COUNTER_MESD, R16
+	STS		ALARM_MINU, R16				// Inicializamos la alarma en un valor que no vaya a suceder, 25:00. Así suena solo después de haber configurado un valor
+	STS		ALARM_MIND, R16
+	LDI		R16, 5
+	STS		ALARM_HORU, R16
+	LDI		R16, 2
+	STS		ALARM_HORD, R16
 	LDI		R16, 1
 	STS		COUNTER_DIAU, R16			// Para que inicie en fecha 01/01 cargamos uno a los displays de DIA unidades y MES unidades	
 	STS		COUNTER_MESU, R16
 	CBI		PORTD, 0
+	CBI		PORTC, 5
 	RET
 
 /****************************************/
 CHECK_ALARM_NOW:
+	LDS		R16, FLAG_ALARM_FIRED		// Si la alarma ya fue disparada, no volver a activar
+	CPI		R16, 1
+	BREQ	EXIT_CHECK_ALARM
 	;----- VERIFICAR ALARMA -----;
 	LDS		R16, ALARM_MINU
 	LDS		R17, COUNTER_MINU
@@ -237,6 +242,8 @@ CHECK_ALARM_NOW:
 	LDI		R16, ALARM_RING				// Para este punto todo ha de haber coincidido, así que activamos la alarma (buzzer)
 	STS		STATE, R16
 	SBI		PORTC, 5
+	LDI		R16, 1
+	STS		FLAG_ALARM_FIRED, R16		// Marcamos que ya fue disparada
 EXIT_CHECK_ALARM:						// Salimos de la verificación de la alarma
 	RET	
 
@@ -296,6 +303,7 @@ CHECK_NORMAL_HOUR:						// Si aún no ha pasado las 20 horas incrementamos la hor
 EXIT_REVISAR_CLK:
 	LDI		R16, 0
 	STS		FLAG_CLK, R16				// Limpiamos la bandera para revisar continuamente cada vez que pasa 1 min
+	STS		FLAG_ALARM_FIRED, R16		// Limpiamos la bandera de la alarma para que pueda sonar otra vez 
 	RET
 
 INC_DATE:								// Incremento de la fecha (sucede cada 24 horas)
@@ -592,13 +600,6 @@ TIMR2_ISR:
 	PUSH	ZL
 	IN		R16, SREG					// Guardar el SREG en la pila
 	PUSH	R16
-	;----- DECREMENTAR DEBOUNCE SI ESTA ACTIVO -----;
-	LDS		R16, COUNTER_DEBOUNCE		// Cargar contador de debounce desde SRAM
-	TST		R16							// Verificar si es 0 (TST es como un AND consigo mismo, solo afecta banderas)
-	BREQ	SKIP_DEBOUNCE				// Si ya es 0, no decrementar
-	DEC		R16							// Decrementar contador
-	STS		COUNTER_DEBOUNCE, R16		// Guardar valor actualizado
-SKIP_DEBOUNCE:
 	;----- APAGAR TODOS LOS DISPLAYS -----;
 	CBI		PORTB, 0
 	CBI		PORTB, 1
@@ -873,10 +874,6 @@ PCINT_ISR:
 	PUSH	R17
 	IN		R16, SREG
 	PUSH	R16
-	;----- ANTIRREBOTE (DEBOUNCE) -----;
-	LDS		R16, COUNTER_DEBOUNCE
-	TST		R16
-	BRNE	PCINT_EARLY_EXIT			// Si el contador aún no llegó a 0, ignorar el cambio
 	;----- LEER BOTONES -----;
 	IN		R16, PINC
 	COM		R16							// Invertir todos los bits: botones activos en bajo -> activos en alto
@@ -892,9 +889,6 @@ PCINT_EARLY_EXIT:						// Se añadió esta rutina aquí para que no estuviera fuera
 	POP		R16
 	RETI
 PCINT_CONTINUE:
-	;----- ACTIVAR ANTIRREBOTE -----;
-	LDI		R17, DEBOUNCE_MS
-	STS		COUNTER_DEBOUNCE, R17		// Cargar el tiempo de antirrebote, el TIMR2_ISR lo va decrementando
 	;----- SI ALARMA SONANDO -----;
 	// Cualquier botón apaga la alarma
 	LDS		R16, STATE
