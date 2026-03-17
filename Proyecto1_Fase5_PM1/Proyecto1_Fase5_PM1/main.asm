@@ -2,7 +2,7 @@
  * Proyecto1_Fase5_PM1.asm
  * Creado: 13/03/2026 11:11:07
  * Autor : AnaLucia
- * Descripcion: Fase 4 - Reloj que incrementa la fecha
+ * Descripcion: Reloj funcionando correctamente. Se muestra la hora, la fecha, permite configurar estos valores y la alarma está integrada. 
  */
 
  /****************************************/
@@ -868,7 +868,7 @@ EXIT_TMR0_ISR:
 	RETI
 
 /****************************************/
-// ISR Pin Change - Manejo de botones con debounce
+// ISR Pin Change - Manejo de botones (antirrebote físico)
 PCINT_ISR:
 	PUSH	R16
 	PUSH	R17
